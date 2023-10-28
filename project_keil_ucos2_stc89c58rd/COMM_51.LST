@@ -1,0 +1,83 @@
+C51 COMPILER V9.00   COMM_51                                                               10/19/2015 09:36:05 PAGE 1   
+
+
+C51 COMPILER V9.00, COMPILATION OF MODULE COMM_51
+OBJECT MODULE PLACED IN COMM_51.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE COMM_51.C LARGE BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          /*
+   2          *********************************************************************************************************
+   3          *                               基于uC/OS-II的串口驱动及应用程序接口函数
+   4          *                                             版权所有
+   5          *
+   6          * 文件名 : COMM_51.C
+   7          * 作者   : 陈是知 csz-mail@126.com 北京中软 2005。3。11
+   8          *********************************************************************************************************
+   9          */
+  10          
+  11          #include "includes.h"
+  12          
+  13          
+  14          void CommInit() reentrant
+  15          {
+  16   1      
+  17   1                      TMOD=TMOD&0x0F;
+  18   1              TMOD=TMOD|0x20;
+  19   1              TL1=0xFD,TH1=0xFD;//9600 , 11.0592MHz
+  20   1              SCON=0x50;PCON=0x00;
+  21   1              TR1=1;
+  22   1                      ES=1;
+  23   1      }
+  24          
+  25          
+  26          void  CommISRHandler () reentrant
+  27          {  
+  28   1          INT8U   c;
+  29   1          INT8U   err;
+  30   1              extern INT8U FirstCharFlag;
+  31   1              
+  32   1          if(RI){
+  33   2                  RI=0;
+  34   2                  c=SBUF;
+  35   2                  CommPutRxChar(c);
+  36   2                        }
+  37   1      
+  38   1          if(TI){
+  39   2                              TI=0;
+  40   2                              if(FirstCharFlag==0x01)
+  41   2                       {
+  42   3                                c = CommGetTxChar(&err);   
+  43   3                        FirstCharFlag=0x00;
+  44   3                    if(err==COMM_NO_ERR)
+  45   3                                SBUF=c;
+  46   3                               }
+  47   2                              else
+  48   2                               {
+  49   3                                c = CommGetTxChar(&err);
+  50   3                                if(err==COMM_NO_ERR)
+  51   3                                  SBUF=c;
+  52   3                                else
+  53   3                                  FirstCharFlag=0x01;
+  54   3                               }
+  55   2                }
+C51 COMPILER V9.00   COMM_51                                                               10/19/2015 09:36:05 PAGE 2   
+
+  56   1                                
+  57   1      }
+  58           
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    153    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
