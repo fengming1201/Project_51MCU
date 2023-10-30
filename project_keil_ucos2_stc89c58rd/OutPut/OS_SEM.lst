@@ -1,0 +1,449 @@
+C51 COMPILER V9.56.0.0   OS_SEM                                                            10/30/2023 17:47:35 PAGE 1   
+
+
+C51 COMPILER V9.56.0.0, COMPILATION OF MODULE OS_SEM
+OBJECT MODULE PLACED IN .\OutPut\OS_SEM.obj
+COMPILER INVOKED BY: C:\Keil_v5c\C51\BIN\C51.EXE uCosii\OS_SEM.C LARGE OPTIMIZE(8,SIZE) DEBUG OBJECTEXTEND PRINT(.\OutPu
+                    -t\OS_SEM.lst) TABS(2) OBJECT(.\OutPut\OS_SEM.obj)
+
+line level    source
+
+   1          /*
+   2          *********************************************************************************************************
+   3          *                                                uC/OS-II
+   4          *                                          The Real-Time Kernel
+   5          *                                          SEMAPHORE MANAGEMENT
+   6          *
+   7          *                          (c) Copyright 1992-2001, Jean J. Labrosse, Weston, FL
+   8          *                                           All Rights Reserved
+   9          *
+  10          * File : OS_SEM.C
+  11          * By   : Jean J. Labrosse
+  12          *********************************************************************************************************
+  13          */
+  14          
+  15          #ifndef  OS_MASTER_FILE
+  16          #include "source\includes.h"
+  17          #endif
+  18          
+  19          #if OS_SEM_EN > 0
+  20          /*
+  21          *********************************************************************************************************
+  22          *                                           ACCEPT SEMAPHORE
+  23          *
+  24          * Description: This function checks the semaphore to see if a resource is available or, if an event
+  25          *              occurred.  Unlike OSSemPend(), OSSemAccept() does not suspend the calling task if the
+  26          *              resource is not available or the event did not occur.
+  27          *
+  28          * Arguments  : pevent     is a pointer to the event control block
+  29          *
+  30          * Returns    : >  0       if the resource is available or the event did not occur the semaphore is
+  31          *                         decremented to obtain the resource.
+  32          *              == 0       if the resource is not available or the event did not occur or,
+  33          *                         if 'pevent' is a NULL pointer or,
+  34          *                         if you didn't pass a pointer to a semaphore
+  35          *********************************************************************************************************
+  36          */
+  37          
+  38          #if OS_SEM_ACCEPT_EN > 0
+              INT16U  OSSemAccept (OS_EVENT *pevent) reentrant
+              {
+              #if OS_CRITICAL_METHOD == 3                           /* Allocate storage for CPU status register      */
+                  OS_CPU_SR  cpu_sr;
+              #endif    
+                  INT16U     cnt;
+              
+              
+              #if OS_ARG_CHK_EN > 0
+                  if (pevent == (OS_EVENT *)0) {                    /* Validate 'pevent'                             */
+                      return (0);
+                  }
+                  if (pevent->OSEventType != OS_EVENT_TYPE_SEM) {   /* Validate event block type                     */
+                      return (0);
+                  }
+              #endif
+C51 COMPILER V9.56.0.0   OS_SEM                                                            10/30/2023 17:47:35 PAGE 2   
+
+                  OS_ENTER_CRITICAL();
+                  cnt = pevent->OSEventCnt;
+                  if (cnt > 0) {                                    /* See if resource is available                  */
+                      pevent->OSEventCnt--;                         /* Yes, decrement semaphore and notify caller    */
+                  }
+                  OS_EXIT_CRITICAL();
+                  return (cnt);                                     /* Return semaphore count                        */
+              }
+              #endif    
+  64          
+  65          /*$PAGE*/
+  66          /*
+  67          *********************************************************************************************************
+  68          *                                           CREATE A SEMAPHORE
+  69          *
+  70          * Description: This function creates a semaphore.
+  71          *
+  72          * Arguments  : cnt           is the initial value for the semaphore.  If the value is 0, no resource is
+  73          *                            available (or no event has occurred).  You initialize the semaphore to a
+  74          *                            non-zero value to specify how many resources are available (e.g. if you have
+  75          *                            10 resources, you would initialize the semaphore to 10).
+  76          *
+  77          * Returns    : != (void *)0  is a pointer to the event control clock (OS_EVENT) associated with the
+  78          *                            created semaphore
+  79          *              == (void *)0  if no event control blocks were available
+  80          *********************************************************************************************************
+  81          */
+  82          
+  83          OS_EVENT  *OSSemCreate (INT16U cnt) reentrant
+  84          {
+  85   1      #if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
+                  OS_CPU_SR  cpu_sr;
+              #endif    
+  88   1          OS_EVENT  *pevent;
+  89   1      
+  90   1      
+  91   1          if (OSIntNesting > 0) {                                /* See if called from ISR ...               */
+  92   2              return ((OS_EVENT *)0);                            /* ... can't CREATE from an ISR             */
+  93   2          }
+  94   1          OS_ENTER_CRITICAL();
+  95   1          pevent = OSEventFreeList;                              /* Get next free event control block        */
+  96   1          if (OSEventFreeList != (OS_EVENT *)0) {                /* See if pool of free ECB pool was empty   */
+  97   2              OSEventFreeList = (OS_EVENT *)OSEventFreeList->OSEventPtr;
+  98   2          }
+  99   1          OS_EXIT_CRITICAL();
+ 100   1          if (pevent != (OS_EVENT *)0) {                         /* Get an event control block               */
+ 101   2              pevent->OSEventType = OS_EVENT_TYPE_SEM;
+ 102   2              pevent->OSEventCnt  = cnt;                         /* Set semaphore value                      */
+ 103   2              OS_EventWaitListInit(pevent);
+ 104   2          }
+ 105   1          return (pevent);
+ 106   1      }
+ 107          
+ 108          /*$PAGE*/
+ 109          /*
+ 110          *********************************************************************************************************
+ 111          *                                         DELETE A SEMAPHORE
+ 112          *
+ 113          * Description: This function deletes a semaphore and readies all tasks pending on the semaphore.
+ 114          *
+ 115          * Arguments  : pevent        is a pointer to the event control block associated with the desired
+ 116          *                            semaphore.
+C51 COMPILER V9.56.0.0   OS_SEM                                                            10/30/2023 17:47:35 PAGE 3   
+
+ 117          *
+ 118          *              opt           determines delete options as follows:
+ 119          *                            opt == OS_DEL_NO_PEND   Delete semaphore ONLY if no task pending
+ 120          *                            opt == OS_DEL_ALWAYS    Deletes the semaphore even if tasks are waiting.
+ 121          *                                                    In this case, all the tasks pending will be readied.
+ 122          *
+ 123          *              err           is a pointer to an error code that can contain one of the following values:
+ 124          *                            OS_NO_ERR               The call was successful and the semaphore was deleted
+ 125          *                            OS_ERR_DEL_ISR          If you attempted to delete the semaphore from an ISR
+ 126          *                            OS_ERR_INVALID_OPT      An invalid option was specified
+ 127          *                            OS_ERR_TASK_WAITING     One or more tasks were waiting on the semaphore
+ 128          *                            OS_ERR_EVENT_TYPE       If you didn't pass a pointer to a semaphore
+ 129          *                            OS_ERR_PEVENT_NULL      If 'pevent' is a NULL pointer.
+ 130          *
+ 131          * Returns    : pevent        upon error
+ 132          *              (OS_EVENT *)0 if the semaphore was successfully deleted.
+ 133          *
+ 134          * Note(s)    : 1) This function must be used with care.  Tasks that would normally expect the presence of
+ 135          *                 the semaphore MUST check the return code of OSSemPend().
+ 136          *              2) OSSemAccept() callers will not know that the intended semaphore has been deleted unless
+ 137          *                 they check 'pevent' to see that it's a NULL pointer.
+ 138          *              3) This call can potentially disable interrupts for a long time.  The interrupt disable
+ 139          *                 time is directly proportional to the number of tasks waiting on the semaphore.
+ 140          *              4) Because ALL tasks pending on the semaphore will be readied, you MUST be careful in
+ 141          *                 applications where the semaphore is used for mutual exclusion because the resource(s)
+ 142          *                 will no longer be guarded by the semaphore.
+ 143          *********************************************************************************************************
+ 144          */
+ 145          
+ 146          #if OS_SEM_DEL_EN > 0
+              OS_EVENT  *OSSemDel (OS_EVENT *pevent, INT8U opt, INT8U *err) reentrant
+              {
+              #if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
+                  OS_CPU_SR  cpu_sr;
+              #endif    
+                  BOOLEAN    tasks_waiting;
+              
+              
+                  if (OSIntNesting > 0) {                                /* See if called from ISR ...               */
+                      *err = OS_ERR_DEL_ISR;                             /* ... can't DELETE from an ISR             */
+                      return (pevent);
+                  }
+              #if OS_ARG_CHK_EN > 0
+                  if (pevent == (OS_EVENT *)0) {                         /* Validate 'pevent'                        */
+                      *err = OS_ERR_PEVENT_NULL;
+                      return (pevent);
+                  }
+                  if (pevent->OSEventType != OS_EVENT_TYPE_SEM) {        /* Validate event block type                */
+                      *err = OS_ERR_EVENT_TYPE;
+                      return (pevent);
+                  }
+              #endif
+                  OS_ENTER_CRITICAL();
+                  if (pevent->OSEventGrp != 0x00) {                      /* See if any tasks waiting on semaphore    */
+                      tasks_waiting = TRUE;                              /* Yes                                      */
+                  } else {
+                      tasks_waiting = FALSE;                             /* No                                       */
+                  }
+                  switch (opt) {
+                      case OS_DEL_NO_PEND:                               /* Delete semaphore only if no task waiting */
+                           if (tasks_waiting == FALSE) {
+                               pevent->OSEventType = OS_EVENT_TYPE_UNUSED;
+C51 COMPILER V9.56.0.0   OS_SEM                                                            10/30/2023 17:47:35 PAGE 4   
+
+                               pevent->OSEventPtr  = OSEventFreeList;    /* Return Event Control Block to free list  */
+                               OSEventFreeList     = pevent;             /* Get next free event control block        */
+                               OS_EXIT_CRITICAL();
+                               *err = OS_NO_ERR;
+                               return ((OS_EVENT *)0);                   /* Semaphore has been deleted               */
+                           } else {
+                               OS_EXIT_CRITICAL();
+                               *err = OS_ERR_TASK_WAITING;
+                               return (pevent);
+                           }
+              
+                      case OS_DEL_ALWAYS:                                /* Always delete the semaphore              */
+                           while (pevent->OSEventGrp != 0x00) {          /* Ready ALL tasks waiting for semaphore    */
+                               OS_EventTaskRdy(pevent, (void *)0, OS_STAT_SEM);
+                           }
+                           pevent->OSEventType = OS_EVENT_TYPE_UNUSED;
+                           pevent->OSEventPtr  = OSEventFreeList;        /* Return Event Control Block to free list  */
+                           OSEventFreeList     = pevent;                 /* Get next free event control block        */
+                           OS_EXIT_CRITICAL();
+                           if (tasks_waiting == TRUE) {                  /* Reschedule only if task(s) were waiting  */
+                               OS_Sched();                               /* Find highest priority task ready to run  */
+                           }
+                           *err = OS_NO_ERR;
+                           return ((OS_EVENT *)0);                       /* Semaphore has been deleted               */
+              
+                      default:
+                           OS_EXIT_CRITICAL();
+                           *err = OS_ERR_INVALID_OPT;
+                           return (pevent);
+                  }
+              }
+              #endif
+ 211          
+ 212          /*$PAGE*/
+ 213          /*
+ 214          *********************************************************************************************************
+ 215          *                                           PEND ON SEMAPHORE
+ 216          *
+ 217          * Description: This function waits for a semaphore.
+ 218          *
+ 219          * Arguments  : pevent        is a pointer to the event control block associated with the desired
+ 220          *                            semaphore.
+ 221          *
+ 222          *              timeout       is an optional timeout period (in clock ticks).  If non-zero, your task will
+ 223          *                            wait for the resource up to the amount of time specified by this argument.
+ 224          *                            If you specify 0, however, your task will wait forever at the specified
+ 225          *                            semaphore or, until the resource becomes available (or the event occurs).
+ 226          *
+ 227          *              err           is a pointer to where an error message will be deposited.  Possible error
+ 228          *                            messages are:
+ 229          *
+ 230          *                            OS_NO_ERR           The call was successful and your task owns the resource
+ 231          *                                                or, the event you are waiting for occurred.
+ 232          *                            OS_TIMEOUT          The semaphore was not received within the specified
+ 233          *                                                timeout.
+ 234          *                            OS_ERR_EVENT_TYPE   If you didn't pass a pointer to a semaphore.
+ 235          *                            OS_ERR_PEND_ISR     If you called this function from an ISR and the result
+ 236          *                                                would lead to a suspension.
+ 237          *                            OS_ERR_PEVENT_NULL  If 'pevent' is a NULL pointer.
+ 238          *
+ 239          * Returns    : none
+ 240          *********************************************************************************************************
+C51 COMPILER V9.56.0.0   OS_SEM                                                            10/30/2023 17:47:35 PAGE 5   
+
+ 241          */
+ 242          
+ 243          void  OSSemPend (OS_EVENT *pevent, INT16U timeout, INT8U *err) reentrant
+ 244          {
+ 245   1      #if OS_CRITICAL_METHOD == 3                           /* Allocate storage for CPU status register      */
+                  OS_CPU_SR  cpu_sr;
+              #endif    
+ 248   1      
+ 249   1      
+ 250   1          if (OSIntNesting > 0) {                           /* See if called from ISR ...                    */
+ 251   2              *err = OS_ERR_PEND_ISR;                       /* ... can't PEND from an ISR                    */
+ 252   2              return;
+ 253   2          }
+ 254   1      #if OS_ARG_CHK_EN > 0
+                  if (pevent == (OS_EVENT *)0) {                    /* Validate 'pevent'                             */
+                      *err = OS_ERR_PEVENT_NULL;
+                      return;
+                  }
+                  if (pevent->OSEventType != OS_EVENT_TYPE_SEM) {   /* Validate event block type                     */
+                      *err = OS_ERR_EVENT_TYPE;
+                      return;
+                  }
+              #endif
+ 264   1          OS_ENTER_CRITICAL();
+ 265   1          if (pevent->OSEventCnt > 0) {                     /* If sem. is positive, resource available ...   */
+ 266   2              pevent->OSEventCnt--;                         /* ... decrement semaphore only if positive.     */
+ 267   2              OS_EXIT_CRITICAL();
+ 268   2              *err = OS_NO_ERR;
+ 269   2              return;
+ 270   2          }
+ 271   1                                                            /* Otherwise, must wait until event occurs       */
+ 272   1          OSTCBCur->OSTCBStat |= OS_STAT_SEM;               /* Resource not available, pend on semaphore     */
+ 273   1          OSTCBCur->OSTCBDly   = timeout;                   /* Store pend timeout in TCB                     */
+ 274   1          OS_EventTaskWait(pevent);                         /* Suspend task until event or timeout occurs    */
+ 275   1          OS_EXIT_CRITICAL();
+ 276   1          OS_Sched();                                       /* Find next highest priority task ready         */
+ 277   1          OS_ENTER_CRITICAL();
+ 278   1          if (OSTCBCur->OSTCBStat & OS_STAT_SEM) {          /* Must have timed out if still waiting for event*/
+ 279   2              OS_EventTO(pevent);
+ 280   2              OS_EXIT_CRITICAL();
+ 281   2              *err = OS_TIMEOUT;                            /* Indicate that didn't get event within TO      */
+ 282   2              return;
+ 283   2          }
+ 284   1          OSTCBCur->OSTCBEventPtr = (OS_EVENT *)0;
+ 285   1          OS_EXIT_CRITICAL();
+ 286   1          *err = OS_NO_ERR;
+ 287   1      }
+ 288          /*$PAGE*/
+ 289          /*
+ 290          *********************************************************************************************************
+ 291          *                                         POST TO A SEMAPHORE
+ 292          *
+ 293          * Description: This function signals a semaphore
+ 294          *
+ 295          * Arguments  : pevent        is a pointer to the event control block associated with the desired
+ 296          *                            semaphore.
+ 297          *
+ 298          * Returns    : OS_NO_ERR           The call was successful and the semaphore was signaled.
+ 299          *              OS_SEM_OVF          If the semaphore count exceeded its limit.  In other words, you have
+ 300          *                                  signalled the semaphore more often than you waited on it with either
+ 301          *                                  OSSemAccept() or OSSemPend().
+ 302          *              OS_ERR_EVENT_TYPE   If you didn't pass a pointer to a semaphore
+C51 COMPILER V9.56.0.0   OS_SEM                                                            10/30/2023 17:47:35 PAGE 6   
+
+ 303          *              OS_ERR_PEVENT_NULL  If 'pevent' is a NULL pointer.
+ 304          *********************************************************************************************************
+ 305          */
+ 306          
+ 307          INT8U  OSSemPost (OS_EVENT *pevent) reentrant
+ 308          {
+ 309   1      #if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
+                  OS_CPU_SR  cpu_sr;                               
+              #endif    
+ 312   1      
+ 313   1      
+ 314   1      #if OS_ARG_CHK_EN > 0
+                  if (pevent == (OS_EVENT *)0) {                         /* Validate 'pevent'                        */
+                      return (OS_ERR_PEVENT_NULL);
+                  }
+                  if (pevent->OSEventType != OS_EVENT_TYPE_SEM) {        /* Validate event block type                */
+                      return (OS_ERR_EVENT_TYPE);
+                  }
+              #endif
+ 322   1          OS_ENTER_CRITICAL();
+ 323   1          if (pevent->OSEventGrp != 0x00) {                      /* See if any task waiting for semaphore    */
+ 324   2              OS_EventTaskRdy(pevent, (void *)0, OS_STAT_SEM);   /* Ready highest prio task waiting on event */
+ 325   2              OS_EXIT_CRITICAL();
+ 326   2              OS_Sched();                                   /* Find highest priority task ready to run       */
+ 327   2              return (OS_NO_ERR);
+ 328   2          }
+ 329   1          if (pevent->OSEventCnt < 65535) {                 /* Make sure semaphore will not overflow         */
+ 330   2              pevent->OSEventCnt++;                         /* Increment semaphore count to register event   */
+ 331   2              OS_EXIT_CRITICAL();
+ 332   2              return (OS_NO_ERR);
+ 333   2          }
+ 334   1          OS_EXIT_CRITICAL();                               /* Semaphore value has reached its maximum       */
+ 335   1          return (OS_SEM_OVF);
+ 336   1      }
+ 337          /*
+ 338          *********************************************************************************************************
+ 339          *                                          QUERY A SEMAPHORE
+ 340          *
+ 341          * Description: This function obtains information about a semaphore
+ 342          *
+ 343          * Arguments  : pevent        is a pointer to the event control block associated with the desired
+ 344          *                            semaphore
+ 345          *
+ 346          *              ppdata         is a pointer to a structure that will contain information about the
+ 347          *                            semaphore.
+ 348          *
+ 349          * Returns    : OS_NO_ERR           The call was successful and the message was sent
+ 350          *              OS_ERR_EVENT_TYPE   If you are attempting to obtain data from a non semaphore.
+ 351          *              OS_ERR_PEVENT_NULL  If 'pevent' is a NULL pointer.
+ 352          *********************************************************************************************************
+ 353          */
+ 354          
+ 355          #if OS_SEM_QUERY_EN > 0
+              INT8U  OSSemQuery (OS_EVENT *pevent, OS_SEM_DATA *ppdata) reentrant
+              {
+              #if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
+                  OS_CPU_SR  cpu_sr;
+              #endif    
+                  INT8U     *psrc;
+                  INT8U     *pdest;
+              
+              
+C51 COMPILER V9.56.0.0   OS_SEM                                                            10/30/2023 17:47:35 PAGE 7   
+
+              #if OS_ARG_CHK_EN > 0
+                  if (pevent == (OS_EVENT *)0) {                         /* Validate 'pevent'                        */
+                      return (OS_ERR_PEVENT_NULL);
+                  }
+                  if (pevent->OSEventType != OS_EVENT_TYPE_SEM) {        /* Validate event block type                */
+                      return (OS_ERR_EVENT_TYPE);
+                  }
+              #endif
+                  OS_ENTER_CRITICAL();
+                  ppdata->OSEventGrp = pevent->OSEventGrp;                /* Copy message mailbox wait list           */
+                  psrc              = &pevent->OSEventTbl[0];
+                  pdest             = &ppdata->OSEventTbl[0];
+              #if OS_EVENT_TBL_SIZE > 0
+                  *pdest++          = *psrc++;
+              #endif
+              
+              #if OS_EVENT_TBL_SIZE > 1
+                  *pdest++          = *psrc++;
+              #endif
+              
+              #if OS_EVENT_TBL_SIZE > 2
+                  *pdest++          = *psrc++;
+              #endif
+              
+              #if OS_EVENT_TBL_SIZE > 3
+                  *pdest++          = *psrc++;
+              #endif
+              
+              #if OS_EVENT_TBL_SIZE > 4
+                  *pdest++          = *psrc++;
+              #endif
+              
+              #if OS_EVENT_TBL_SIZE > 5
+                  *pdest++          = *psrc++;
+              #endif
+              
+              #if OS_EVENT_TBL_SIZE > 6
+                  *pdest++          = *psrc++;
+              #endif
+              
+              #if OS_EVENT_TBL_SIZE > 7
+                  *pdest            = *psrc;
+              #endif
+                  ppdata->OSCnt      = pevent->OSEventCnt;                /* Get semaphore count                      */
+                  OS_EXIT_CRITICAL();
+                  return (OS_NO_ERR);
+              }
+              #endif                                                     /* OS_SEM_QUERY_EN                          */
+ 413          #endif                                                     /* OS_SEM_EN                                */
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    539    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
